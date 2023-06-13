@@ -1,0 +1,582 @@
+---
+title: "Final Project"
+author: "Brandon Xia"
+date: "2023-06-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+library(dplyr)
+rm()
+session=list()
+for(i in 1:18){
+  session[[i]]=readRDS(paste('./Data/session',i,'.rds',sep=''))
+  print(session[[i]]$mouse_name)
+  print(session[[i]]$date_exp)
+  
+}
+```
+## Abstract
+
+## This project attempts to use the material learned in the class to create a prediction model that can effectively predict the outcomes of trials in an experiment. This project is separated into 5 sections: introduction, exploratory analysis, data integration, predictive modelling, and predictive performance. In this project, I use Pearson Correlation tests to establish a relationship between stimuli, neural activity, and feedback.
+
+## 1. Introduction
+
+## The objective of this project is to create a model that can predict the outcome of a given trial (feedback type of 1 or -1) when presented with the neural data and stimuli of that trial.
+
+## The data set originates from a study by Steinmetz et al. which sought to determine the activation patterns of neural pathways in mice when presented with visual stimuli and a choice to be made. Mice were given two visual stimuli and prompted to make a decision between turning a wheel left, right, or doing nothing. All sets of stimuli had a set "correct action" that would lead to a reward when performed except for the case when the two stimuli were present and identical. In that case, the "correct action" was randomized. The data has six variables per trial: two for the two stimuli presented, one for the correctness of the mouse's response, one measuring the spikes in neurons during specific time bins, one for specifying these bins, and one for the location of the neurons.
+
+## As stated previously, the dependent variable in the predictive model is the correctness of the response, with the other five variables being explanatory. The model will be tested from two samples of the data which were randomly removed from sessions 1 and 18.
+
+## 2. Exploratory Analysis
+
+## First, I present a dataframe that details the specifics for each session, including the success rate of the mouse and the number of brain areas examined.
+
+```{r}
+param <- setNames(data.frame(matrix(ncol = 6, nrow = 0)), c("mouse","date","numtrials","brain_areas","numneurons","success_rate"))
+brainareaslist <- list()
+for (i in 1:18)
+{
+  numcorrect = 0
+  numareas = 0
+  listareas = list()
+  for (j in 1:length(session[[i]][["feedback_type"]]))
+  {
+    if (session[[i]][["feedback_type"]][[j]] == 1){
+      numcorrect <- numcorrect + 1
+    }
+  }
+  
+  for (j in 1:length(session[[i]][["brain_area"]]))
+  {
+    if (!(session[[i]][["brain_area"]][[j]] %in% listareas)){
+      listareas[[numareas+1]] <- session[[i]][["brain_area"]][[j]]
+      numareas <- numareas+1
+    }
+  }
+  rate <- round(numcorrect/length(session[[i]][["feedback_type"]]),digits = 3)
+  brainareaslist[[i]] <- listareas
+  param[i,] <- c(session[[i]][["mouse_name"]],session[[i]][["date_exp"]],length(session[[i]][["feedback_type"]]),length(listareas),length(session[[i]][["brain_area"]]),rate)
+}
+param
+```
+
+## Now, I show a dataframe showing the results of each trial, for each session, minus the neuron results. I add another column that shows the difference between the contrasts of each visual stimulus.
+
+```{r}
+sessiondata = list()
+for (i in 1:18)
+{
+  sessiondata[[i]] <- data.frame(session[[i]][["contrast_left"]],session[[i]][["contrast_right"]],session[[i]][["feedback_type"]])
+  colnames(sessiondata[[i]])[1] ="contrast_left"
+  colnames(sessiondata[[i]])[2] ="contrast_right"
+  colnames(sessiondata[[i]])[3] ="feedback_type"
+  contrast_diff <- session[[i]][["contrast_left"]] - session[[i]][["contrast_right"]]
+sessiondata[[i]] <- data.frame(sessiondata[[i]],contrast_diff)
+  colnames(sessiondata[[i]])[4] = "contrast_diff (l-r)"
+}
+
+sessiondata
+```
+
+## In order to determine neural activity in response to stimuli, several plots will be created. The first will show the average number of spikes per area across trials. The next two will compare the average spikes vs the contrast difference and the total contrast value of both screens added together. Finally, for the data integration section, we will attempt to see if a relationship exists between the neural activity and feedback, across different levels of contrast. We will ignore the incomplete sessions 1 and 18.
+
+# Plot Group 1: Average spikes per trial(2-17)
+```{r}
+library(randomcoloR)
+palette <- distinctColorPalette(20)
+listavgspks <- list()
+avgspksplots <- list()
+for (i in 1:18)
+{
+  listpertrial <- list()
+  for (j in 1:length(session[[i]][["feedback_type"]]))
+  {
+    spk.trial = session[[i]]$spks[[j]]
+    area=session[[i]]$brain_area
+    spk.count=apply(spk.trial,1,sum)
+    spk.average.tapply=tapply(spk.count, area, mean)
+    tmp <- data.frame(
+      area = area,
+      spikes = spk.count
+)
+    spk.average.dplyr =tmp %>%
+      group_by(area) %>% summarize(mean= mean(spikes))
+    listpertrial[[j]] <- spk.average.dplyr
+  }
+  listavgspks[[i]] <- listpertrial
+  avgspksplots[[i]] <- plot(x=1,y=0, col='white',xlim=c(0,length(session[[i]][["feedback_type"]])),ylim=c(0.5,1.2*max(listpertrial[[1]][["mean"]])), xlab="Trials",ylab="Average spike counts", main=paste("Spikes per area in Session", i))
+  for (j in 1:length(listpertrial[[1]][["area"]]))
+  {
+    pts <- c()
+    for (k in 1:(length(session[[i]][["feedback_type"]])-1))
+    {
+      lines(c(k,k+1),c(listpertrial[[k]][["mean"]][[j]],listpertrial[[k+1]][["mean"]][[j]]),col=palette[[j]],lty=2,lwd=1)
+      pts <- append(pts,listpertrial[[k]][["mean"]][[j]])
+    }
+    pts <- append(pts,listpertrial[[k+1]][["mean"]][[j]])
+    lines(smooth.spline(c(1:length(session[[i]][["feedback_type"]])),pts),col=palette[[j]],lwd=3)
+    legend("topright", 
+  legend = c(listpertrial[[1]][["area"]])[1:length(listpertrial[[1]][["area"]])], 
+  col = palette, 
+  lty = 1,lwd = 3, 
+  cex = 0.8)
+  }
+}
+
+```
+
+## Plot Group 2: Average spikes vs Contrast Difference
+
+```{r}
+contrastplots <- list()
+for (i in 2:17)
+{
+  contrastplots[[i]] <- plot(x=1,y=0, col='white',xlim=c(-1,1.5),ylim=c(0.5,1.2*max(listavgspks[[i]][[1]][["mean"]])), xlab="Contrast diff",ylab="Average spike counts", main=paste("Spikes vs Contrast in Session", i))
+  for (j in 1:length(listavgspks[[i]][[1]][["area"]]))
+  {
+    for (k in 1:length(session[[i]][["feedback_type"]]))
+    {
+      points(sessiondata[[i]][["contrast_diff (l-r)"]][[k]],listavgspks[[i]][[k]][["mean"]][[j]],col=palette[[j]],pch = 21-j,cex = 0.45)
+    }
+    legend("topright", 
+  legend = c(listavgspks[[i]][[1]][["area"]])[1:length(listavgspks[[i]][[1]][["area"]])], 
+  col = palette, 
+  lty = 1,lwd = 3, 
+  cex = 0.8)
+  }
+}
+```
+## This doesn't seem to yield very coherent results. I will separate the different brain areas to attempt to glean a relationship. I will only do two sessions (6,11), because there would be too many graphs otherwise.
+
+## Plot group 2*: Average spikes vs contrast in session 6
+```{r}
+brainareaplots6 <- list()
+for (i in 1:length(listavgspks[[6]][[1]][["area"]]))
+{
+  brainareaplots6[[i]] <- plot(x=1,y=0, col='white',xlim=c(-1,1),ylim=c(0,2.5), xlab="Contrast diff",ylab="Average spike counts", main=paste("Spikes vs Contrast in Session 6: ", listavgspks[[6]][[1]][["area"]][[i]]))
+  ptsx <- c()
+  ptsy <- c()
+  for (j in 1:length(session[[6]][["feedback_type"]]))
+  {
+    points(sessiondata[[6]][["contrast_diff (l-r)"]][[j]],listavgspks[[6]][[j]][["mean"]][[i]],col=palette[[i]],pch = 20,cex = 0.8)
+    ptsx <- append(ptsx,sessiondata[[6]][["contrast_diff (l-r)"]][[j]])
+    ptsy <- append(ptsy,listavgspks[[6]][[j]][["mean"]][[i]])
+  }
+  fit <- lm(ptsy ~ ptsx + I(ptsx^2) + I(ptsx^3))
+pred <- predict(fit)
+ix <- sort(ptsx, index.return=T)$ix
+
+lines(ptsx[ix], pred[ix], col='red', lwd=2)
+}
+```
+```{r}
+brainareaplots11 <- list()
+for (i in 1:length(listavgspks[[11]][[1]][["area"]]))
+{
+  brainareaplots11[[i]] <- plot(x=1,y=0, col='white',xlim=c(-1,1),ylim=c(0,3), xlab="Contrast diff",ylab="Average spike counts", main=paste("Spikes vs Contrast in Session 11: ", listavgspks[[11]][[1]][["area"]][[i]]))
+  ptsx <- c()
+  ptsy <- c()
+  for (j in 1:length(session[[11]][["feedback_type"]]))
+  {
+    points(sessiondata[[11]][["contrast_diff (l-r)"]][[j]],listavgspks[[11]][[j]][["mean"]][[i]],col=palette[[i]],pch = 20,cex = 0.8)
+    ptsx <- append(ptsx,sessiondata[[11]][["contrast_diff (l-r)"]][[j]])
+    ptsy <- append(ptsy,listavgspks[[11]][[j]][["mean"]][[i]])
+  }
+  fit <- lm(ptsy ~ ptsx + I(ptsx^2) + I(ptsx^3) + I(ptsx^4))
+pred <- predict(fit)
+ix <- sort(ptsx, index.return=T)$ix
+lines(ptsx[ix], pred[ix], col='red', lwd=2)
+}
+```
+## The regression line is nearly straight in most cases in session 6. However, the lines show a noticeable dip in the center in session 11. Perhaps there is a relationship to be seen for session 11. I will replot with the absolute value of the contrast difference.
+
+```{r}
+brainareaplots11a <- list()
+pearsontests11 <- list()
+for (i in 1:length(listavgspks[[11]][[1]][["area"]]))
+{
+  brainareaplots11a[[i]] <- plot(x=1,y=0, col='white',xlim=c(0,1),ylim=c(0,4), xlab="Contrast diff",ylab="Average spike counts", main=paste("Spikes vs Contrast in Session 11: ", listavgspks[[11]][[1]][["area"]][[i]]))
+  ptsx <- c()
+  ptsy <- c()
+  for (j in 1:length(session[[11]][["feedback_type"]]))
+  {
+    points(abs(sessiondata[[11]][["contrast_diff (l-r)"]][[j]]),listavgspks[[11]][[j]][["mean"]][[i]],col=palette[[i]],pch = 20,cex = 0.8)
+    ptsx <- append(ptsx,abs(sessiondata[[11]][["contrast_diff (l-r)"]][[j]]))
+    ptsy <- append(ptsy,listavgspks[[11]][[j]][["mean"]][[i]])
+  }
+  fit <- lm(ptsy ~ ptsx)
+pred <- predict(fit)
+ix <- sort(ptsx, index.return=T)$ix
+lines(ptsx[ix], pred[ix], col='red', lwd=2)
+pearsontests11[[i]] <- cor.test(ptsx,ptsy,method="pearson")
+legend("topright",legend=
+c(main=paste("Pearson correlation coef:",round(pearsontests11[[i]][["estimate"]],digits=3),"\np-val:",formatC(pearsontests11[[i]][["p.value"]],digits=5))))
+}
+```
+## The correlation coefficients are positive, and vary from around 0.2 to 0.5. Although the coefficients are low, the p-value indicates that they are statistically significant. Here is a table of the 95% confidence intervals for the correlation coefficients for each area.
+
+```{r}
+sess11confintervals <- setNames(data.frame(matrix(ncol = 4, nrow = 0)), c("area","lower","estimate","upper"))
+for (i in 1:length(brainareaslist[[11]]))
+{
+  sess11confintervals[i,] <- c(listavgspks[[11]][[1]][["area"]][[i]],pearsontests11[[i]][["conf.int"]][[1]],pearsontests11[[i]][["estimate"]],pearsontests11[[i]][["conf.int"]][[2]])
+}
+sess11confintervals
+```
+
+## As you can see, none of the intervals contain 0. This means that a relationship can be proven in session 11 between the brain area activities and the difference in contrast. On the other hand, session 6 doesn't seem to contain much of a relationship. Let's examine all the sessions to glean a conclusion.
+
+```{r}
+brainareaintervals <- list()
+for (i in 2:17)
+{
+  CIdf <- setNames(data.frame(matrix(ncol=5,nrow=0)),c("area","lower","estimate","upper","p-val"))
+  lrcontrasts <- c()
+  for (j in 1:length(sessiondata[[i]][["feedback_type"]]))
+  {
+    lrcontrasts <- append(lrcontrasts, abs(sessiondata[[i]][["contrast_diff (l-r)"]][[j]]))
+  }
+  for (j in 1:length(brainareaslist[[i]]))
+  {
+    spikes <- c()
+    for (k in 1:length(sessiondata[[i]][["feedback_type"]]))
+    {
+      spikes <- append(spikes,listavgspks[[i]][[k]][["mean"]][[j]])
+    }
+    peartest <- cor.test(lrcontrasts,spikes,method="pearson")
+    CIdf[j,] <- c(listavgspks[[i]][[1]][["area"]][[j]],round(peartest[["conf.int"]][[1]],digits=5),round(peartest[["estimate"]],digits=5),round(peartest[["conf.int"]][[2]],digits=5),formatC(peartest[["p.value"]],digits=5))
+  }
+  brainareaintervals[[i]] <- CIdf
+}
+brainareaintervals
+```
+
+## To make the dataframes easier to picture, I placed the estimates of each section into a box plot. I also merged them to facilitate easier comparison.
+```{r}
+corrbplots <- list()
+vecs <- list()
+for (i in 2:17)
+{
+  vecs[[i]] <- as.double(as.vector(brainareaintervals[[i]][["estimate"]]))
+  bp <- boxplot(vecs[[i]],xlabel="Correlation Coefficient",horizontal=TRUE)
+  title(main=paste("Corr. Coefficient Estimates of Brain Areas in Session",i))
+  corrbplots[[i]] <- bp
+}
+masterbp <- boxplot(vecs,xlabel="Session",horizontal=TRUE)
+title("Correlations of Different Brain Areas Over Sessions")
+```
+
+## It appears session 11 was an outlier. It showed the highest correlation values among its brain areas, and while a couple of other sessions (9,17) also had some high correlation coefficients, most of the sessions showed no major correlation. 
+
+## Changes Between Trials
+
+## Several things of note changed between trials. The average neural activity ranged from a low of ~1 to a high of ~10. For example, in session 13, the area "RN" was recorded as much higher than any other area in the session, and was several times higher than most other areas in other sections. As shown above, the correlation between the neural activity and the contrast also changed from session to session, with some sessions showing no correlation and others demonstrating strong correlation.
+
+## Heterogeneity and Homogeneity
+
+## The sessions were not initiated with the same variables. There were four different mice involved during the 18 sessions recorded. The recorded areas of the brain also differed. Some sessions had only 5 recorded areas while others had over 12. Another thing that differed was the number of measurements taken. Despite this, there was also homogeneity demonstrated in more important areas. The feedback was consistently positive or negative based on the stimulus (other than the case with equal non-zero stimulus) There is overlap of brain areas between trials. For example, nearly all sessions contained the area "root". The stimuli were consistent as well, never more than 1, less than -1, and always at intervals of 0.25.
+
+## 3. Data Integration
+
+## We wish to use all the resources we have to create a predictive model. This means training from all sessions available, despite their differences. I notice that there are many areas in common among the separate trials. I will graph the average spikes by brain area now, disregarding session number.
+
+```{r}
+allareas <- list()
+indexa <- 0
+for (i in 1:length(brainareaslist))
+{
+  for (j in 1:length(brainareaslist[[i]]))
+  {
+    if (!(brainareaslist[[i]][[j]] %in% allareas))
+    {
+      indexa <- indexa + 1
+      allareas[[indexa]] <- brainareaslist[[i]][[j]]
+    }
+  }
+}
+```
+
+## There are 62 different areas being measured.
+
+```{r}
+areavecs <- list()
+contrastvecs <- list()
+for (i in 1:62)
+{
+  avec <- c()
+  cvec <- c()
+  for (j in 1:18)
+  {
+    if (allareas[[i]] %in% listavgspks[[j]][[1]][["area"]])
+    {
+      indexa <- match(allareas[[i]],listavgspks[[j]][[1]][["area"]])
+      for (k in 1:length(listavgspks[[j]]))
+      {
+        avec <- append(avec,listavgspks[[j]][[k]][["mean"]][[indexa]])
+        cvec <- append(cvec,abs(sessiondata[[j]][["contrast_diff (l-r)"]][[k]]))
+      }
+    }
+    else
+    {
+      next
+    }
+  }
+  areavecs[[i]] <- avec
+  contrastvecs[[i]] <- cvec
+}
+sepspkplotlist <- list()
+for (i in 1:62)
+{
+  sepspkplotlist[[i]] <- plot(x=1,y=0, col='white',xlim=c(1,length(areavecs[[i]])),ylim=c(0,max(areavecs[[i]])), xlab="Cumulative Trial #",ylab="Average spike counts", main=paste("Spikes Across Trials for ", allareas[[i]]))
+  lines(c(1:length(areavecs[[i]])),areavecs[[i]],lty=2,lwd=1)
+}
+```
+
+## Now we compare them to difference in contrast and feedback. I will plot spikes vs contrast and perform the Pearson tests first.
+
+```{r}
+conptest <- list()
+integratedcontrast <- list()
+for (i in 1:62)
+{
+  integratedcontrast <- plot(x=1,y=0, col='white',xlim=c(0,1),ylim=c(0,max(areavecs[[i]])), xlab="Absolute Contrast Difference",ylab="Average spike counts", main=paste("Spikes vs Contrast for ", allareas[[i]]))
+  points(contrastvecs[[i]],areavecs[[i]],pch = 20,cex = 0.8)
+  fit <- lm(areavecs[[i]] ~ contrastvecs[[i]])
+  pred <- predict(fit)
+  ix <- sort(contrastvecs[[i]], index.return=T)$ix
+  lines(contrastvecs[[i]][ix], pred[ix], col='red', lwd=2)
+  conptest[[i]] <- cor.test(contrastvecs[[i]],areavecs[[i]],test="pearson")
+}
+```
+
+```{r}
+CIdf <- setNames(data.frame(matrix(ncol=5,nrow=0)),c("area","lower","estimate","upper","p-val"))
+for (i in 1:62)
+{
+  
+    CIdf[i,] <- c(allareas[[i]],round(conptest[[i]][["conf.int"]][[1]],digits=5),round(conptest[[i]][["estimate"]],digits=5),round(conptest[[i]][["conf.int"]][[2]],digits=5),formatC(conptest[[i]][["p.value"]],digits=5))
+}
+CIdf$c6 <- as.numeric(CIdf$`p-val`)
+CIdf <- CIdf[order(CIdf$c6),c("area","lower","estimate","upper","p-val")]
+CIdf
+```
+
+## By merging the responses by the same brain area regardless of session, there is a larger and more streamlined sample. Therefore, many more significant correlation coefficients can be observed. If we can find the confidence intervals of the correlation coefficients between spikes and feedback, it becomes possible to identify the main factors, and therefore create an effective prediction model.
+
+## Since the feedback is random on non-zero equal stimuli, I will first try to eliminate these entries and perform the tests again.
+
+```{r}
+areavecs1 <- list()
+contrastvecs1 <- list()
+for (i in 1:62)
+{
+  avec1 <- c()
+  cvec1 <- c()
+  for (j in 1:18)
+  {
+    if (allareas[[i]] %in% listavgspks[[j]][[1]][["area"]])
+    {
+      indexa <- match(allareas[[i]],listavgspks[[j]][[1]][["area"]])
+      for (k in 1:length(listavgspks[[j]]))
+      {
+        if (sessiondata[[j]][["contrast_diff (l-r)"]][[k]] == 0 & sessiondata[[j]][["contrast_left"]][[k]] != 0)
+        {
+          next
+        }
+        else
+        {
+        avec1 <- append(avec1,listavgspks[[j]][[k]][["mean"]][[indexa]])
+        cvec1 <- append(cvec1,abs(sessiondata[[j]][["contrast_diff (l-r)"]][[k]]))
+        }
+      }
+    }
+    else
+    {
+      next
+    }
+  }
+  areavecs1[[i]] <- avec1
+  contrastvecs1[[i]] <- cvec1
+}
+sepspkplotlist <- list()
+for (i in 1:62)
+{
+  sepspkplotlist[[i]] <- plot(x=1,y=0, col='white',xlim=c(1,length(areavecs1[[i]])),ylim=c(0,max(areavecs1[[i]])), xlab="Cumulative Trial #",ylab="Average spike counts", main=paste("Spikes Across Trials for ", allareas[[i]], " Minus Non-zero Identical Stimuli"))
+  lines(c(1:length(areavecs1[[i]])),areavecs1[[i]],lty=2,lwd=1)
+}
+```
+
+## We will run the same tests again.
+
+```{r}
+conptest1 <- list()
+integratedcontrast1 <- list()
+for (i in 1:62)
+{
+  integratedcontrast1 <- plot(x=1,y=0, col='white',xlim=c(0,1),ylim=c(0,max(areavecs1[[i]])), xlab="Absolute Contrast Difference",ylab="Average spike counts", main=paste("Spikes vs Contrast for ", allareas[[i]]))
+  points(contrastvecs1[[i]],areavecs1[[i]],pch = 20,cex = 0.8)
+  fit <- lm(areavecs1[[i]] ~ contrastvecs1[[i]])
+  pred <- predict(fit)
+  ix <- sort(contrastvecs1[[i]], index.return=T)$ix
+  lines(contrastvecs1[[i]][ix], pred[ix], col='red', lwd=2)
+  conptest1[[i]] <- cor.test(contrastvecs1[[i]],areavecs1[[i]],test="pearson")
+}
+```
+
+```{r}
+CIdf1 <- setNames(data.frame(matrix(ncol=5,nrow=0)),c("area","lower","estimate","upper","p-val"))
+for (i in 1:62)
+{
+  
+    CIdf1[i,] <- c(allareas[[i]],round(conptest1[[i]][["conf.int"]][[1]],digits=5),round(conptest1[[i]][["estimate"]],digits=5),round(conptest1[[i]][["conf.int"]][[2]],digits=5),formatC(conptest1[[i]][["p.value"]],digits=5))
+}
+CIdf1$c6 <- as.numeric(CIdf1$`p-val`)
+CIdf1 <- CIdf1[order(CIdf1$c6),c("area","lower","estimate","upper","p-val")]
+CIdf1
+```
+
+## We see larger correlation coefficients this time. The p-values are smaller and the estimates increase across the board. Since it is established that the elimination of the confounding trials is beneficial to the model, we will establish a correlation between spikes and feedback without those trials.
+
+```{r}
+areavecs2 <- list()
+feedbackvecs <- list()
+for (i in 1:62)
+{
+  avec2 <- c()
+  fvec <- c()
+  for (j in 1:18)
+  {
+    if (allareas[[i]] %in% listavgspks[[j]][[1]][["area"]])
+    {
+      indexa <- match(allareas[[i]],listavgspks[[j]][[1]][["area"]])
+      for (k in 1:length(listavgspks[[j]]))
+      {
+        if (sessiondata[[j]][["contrast_diff (l-r)"]][[k]] == 0 & sessiondata[[j]][["contrast_left"]][[k]] != 0)
+        {
+          next
+        }
+        else
+        {
+        avec2 <- append(avec2,listavgspks[[j]][[k]][["mean"]][[indexa]])
+        fvec <- append(fvec,sessiondata[[j]][["feedback_type"]][[k]])
+        }
+      }
+    }
+    else
+    {
+      next
+    }
+  }
+  areavecs2[[i]] <- avec2
+  feedbackvecs[[i]] <- fvec
+}
+sepspkplotlist1 <- list()
+for (i in 1:62)
+{
+  sepspkplotlist1[[i]] <- plot(x=1,y=0, col='white',xlim=c(-1,1),ylim=c(0,max(areavecs2[[i]])), xlab="Feedback",ylab="Average spike counts", main=paste("Spikes Across Trials for ", allareas[[i]], " Minus Non-zero Identical Stimuli"))
+  points(feedbackvecs[[i]],areavecs2[[i]],lty=2,lwd=1)
+}
+```
+
+```{r}
+conptest2 <- list()
+for (i in 1:62)
+{
+  conptest2[[i]] <- cor.test(feedbackvecs[[i]],areavecs2[[i]],test="pearson")
+}
+CIdf2 <- setNames(data.frame(matrix(ncol=5,nrow=0)),c("area","lower","estimate","upper","p-val"))
+for (i in 1:62)
+{
+  
+    CIdf2[i,] <- c(allareas[[i]],round(conptest2[[i]][["conf.int"]][[1]],digits=5),round(conptest2[[i]][["estimate"]],digits=5),round(conptest2[[i]][["conf.int"]][[2]],digits=5),formatC(conptest2[[i]][["p.value"]],digits=5))
+}
+CIdf2$c6 <- as.numeric(CIdf2$`p-val`)
+CIdf2 <- CIdf2[order(CIdf2$c6),c("area","lower","estimate","upper","p-val")]
+CIdf2
+```
+##
+
+
+## 4. Predictive Modelling
+
+## Since we are predicting for sessions 1 and 18, we will use those sessions for training data but with a formula derived from the previous analysis.
+
+```{r}
+testareas <- list()
+index <- 0
+g <- c(1,18)
+for (i in g)
+{
+  for (j in 1:length(brainareaslist[[i]]))
+  {
+    if (!(brainareaslist[[i]][[j]] %in% testareas))
+    {
+      index <- index + 1
+      testareas[[index]] <- brainareaslist[[i]][[j]]
+    }
+  }
+}
+index <-1
+nottest <- list()
+for (i in 1:62)
+{
+  if (!(allareas[[i]] %in% testareas))
+  {
+    nottest[[index]] <- allareas[[i]]
+    index <- index + 1
+  }
+}
+```
+
+## There are 16 areas in the test data. The model will be based on these areas.
+
+```{r}
+CIdf3 <- CIdf2
+for (i in 1:length(nottest))
+{
+CIdf3 <- subset(CIdf3, area!=nottest[[i]])
+}
+```
+## We take the first 6 of the subset to use as covariates.
+
+```{r}
+len <- 0
+vector1 <- c()
+for (i in 1:18)
+{
+for (j in 1:length(session[[i]][["feedback_type"]]))
+{
+  vector1 <- append(vector1, session[[i]][["feedback_type"]][[j]])
+}
+}
+```
+
+## I ran out of time, but the linear model would have taken the 6 areas with the highest estimates without too large of a p-value as the factors. The formula would be feedback_data ~ "root" + "CA1" + "VISpm" + ...
+## The training data would be from sessions 1 and 18 for consistency.
+
+
+##Load test data
+```{r}
+rm()
+sessiontest=list()
+for(i in 1:2){
+  sessiontest[[i]]=readRDS(paste('./TestData/test',i,'.rds',sep=''))
+  
+}
+```
+
+## Acknowledgements
+
+## https://stackoverflow.com/questions/66052011/create-boxplots-from-separate-data-frames-with-different-number-of-rows
+## https://carpentries-incubator.github.io/geospatial-python/06-raster-intro/
+## https://www.nature.com/articles/s41586-019-1787-x
+## https://sphweb.bumc.bu.edu/otlt/MPH-Modules/PH717-QuantCore/PH717-Module9-Correlation-Regression/PH717-Module9-Correlation-Regression5.html
+## https://www.rdocumentation.org/
+##
